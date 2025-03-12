@@ -1,3 +1,4 @@
+import 'dart:async'; // For the Timer
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -24,11 +25,15 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _currentLocationText;
   CameraPosition? _currentCameraPosition;
 
-
-
   // Firebase Notification
   FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
   User? user = FirebaseAuth.instance.currentUser;
+
+  // Last known position of the marker to draw polyline
+  LatLng? _lastMarkerPosition;
+
+  // Timer for location updates
+  Timer? _locationUpdateTimer;
 
   // Method for showing notifications
   Future<void> _initializeNotifications() async {
@@ -75,20 +80,25 @@ class _HomeScreenState extends State<HomeScreen> {
     await Geolocator.openLocationSettings();
   }
 
+  // Method to get current location
   Future<void> _getCurrentLocation() async {
     if (await _checkPermissionStatus()) {
       if (await _isGpsServiceEnabled()) {
         _currentPosition = await Geolocator.getCurrentPosition();
         _currentLocationText =
         'Latitude: ${_currentPosition!.latitude}, Longitude: ${_currentPosition!.longitude}';
+
+        // Move camera to new position (Automatic Map Animation)
         _mapController.animateCamera(
           CameraUpdate.newCameraPosition(
             CameraPosition(
               target: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
               zoom: 16,
+              bearing: _bearing,
             ),
           ),
         );
+
         setState(() {});
       } else {
         _requestGpsServices();
@@ -98,38 +108,75 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Add marker to map
+  // Method to start real-time location updates
+  void _startLocationUpdates() {
+    _locationUpdateTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+      _getCurrentLocation(); // Get and update location every 10 seconds
+    });
+  }
+
+  // Method to stop real-time location updates
+  void _stopLocationUpdates() {
+    _locationUpdateTimer?.cancel();
+  }
+
+  // Method to add a marker to the map
   void _addMarker(LatLng position) {
     final Marker marker = Marker(
       markerId: MarkerId(DateTime.now().millisecondsSinceEpoch.toString()), // Unique ID
       position: position,
-      infoWindow: InfoWindow(title: "Marker", snippet: "Added marker here"),
+      infoWindow: InfoWindow(
+        title: "My current location", // Title of the info window
+        snippet: "Latitude: ${position.latitude}, Longitude: ${position
+            .longitude}", // Snippet
+      ),
+      onTap: () {
+        print('Marker tapped!');
+      },
     );
+
     setState(() {
-      _markers.add(marker);
+      _markers.add(marker); // Add marker
+
+      // Only add polyline if current position is available
+      if (_currentPosition != null) {
+        _addPolyline(
+            LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+            position);
+      }
+
+      // Update last marker position
+      _lastMarkerPosition = position;
     });
   }
 
-  // Add polyline to map
+  // Method to add polyline between two points
   void _addPolyline(LatLng start, LatLng end) {
     final Polyline polyline = Polyline(
-      polylineId: PolylineId(DateTime.now().millisecondsSinceEpoch.toString()), // Unique ID
-      points: [start, end],
+      polylineId: PolylineId('user_tracking'), // Single polyline ID
+      points: [start, end], // Points for the polyline
       color: Colors.blue,
       width: 4,
     );
+
     setState(() {
-      _polylines.add(polyline);
+      _polylines.clear(); // Clear previous polyline
+      _polylines.add(polyline); // Add updated polyline
     });
   }
-
-
 
   @override
   void initState() {
     super.initState();
-    _getCurrentLocation();
+    _getCurrentLocation(); // Initial location fetch
+    _startLocationUpdates(); // Start real-time location updates
     _initializeNotifications();
+  }
+
+  @override
+  void dispose() {
+    _stopLocationUpdates(); // Stop location updates when the widget is disposed
+    super.dispose();
   }
 
   @override
@@ -201,7 +248,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          SizedBox(height: 20),
           Positioned(
             bottom: 90,
             right: 10,
@@ -230,21 +276,6 @@ class _HomeScreenState extends State<HomeScreen> {
               backgroundColor: Colors.green,
               tooltip: 'Add Marker',
               child: const Icon(Icons.add_location_alt),
-            ),
-            const SizedBox(width: 16),
-            FloatingActionButton(
-              onPressed: () {
-                if (_currentPosition != null) {
-                  // Add polyline between two points
-                  _addPolyline(
-                    LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-                    LatLng(_currentPosition!.latitude + 0.01, _currentPosition!.longitude + 0.01),
-                  );
-                }
-              },
-              backgroundColor: Colors.blue,
-              tooltip: 'Add Polyline',
-              child: const Icon(Icons.polymer),
             ),
             const SizedBox(width: 16),
           ],
